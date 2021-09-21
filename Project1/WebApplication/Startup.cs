@@ -10,6 +10,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using WebApplication.DB_Context;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
+
 
 
 namespace WebApplication
@@ -33,20 +36,20 @@ namespace WebApplication
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILoggerFactory loggerFactory)
         {
+            //
+            app.UseMiddleware<AdminSafeListMiddleware>(Configuration["AdminSafeList"]);
+            //
+
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
+                app.UseSwagger();
+               // app.UseSwagger(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "API_Server v1"));
             }
-            else
-            {
-                app.UseExceptionHandler("/Home/Error");
-                // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-                app.UseHsts();
-            }
+
             app.UseHttpsRedirection();
-            app.UseStaticFiles();
 
             app.UseRouting();
 
@@ -54,12 +57,46 @@ namespace WebApplication
 
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapControllerRoute(
-                    name: "default",
-                    pattern: "{controller=Home}/{action=Index}/{id?}");
+                endpoints.MapControllers();
             });
         }
 
+        //
+        public class AdminSafeListMiddleware
+        {
+            private readonly RequestDelegate _next;
+            private readonly ILogger<AdminSafeListMiddleware> _logger;
+            private readonly byte[][] _safelist;
 
+            public async Task Invoke(HttpContext context)
+            {
+                //if (context.Request.Method != HttpMethod.Get.Method)
+                //{
+                var remoteIp = context.Connection.RemoteIpAddress;
+                _logger.LogDebug("Request from Remote IP address: {RemoteIp}", remoteIp);
+
+                var bytes = remoteIp.GetAddressBytes();
+                var badIp = true;
+                foreach (var address in _safelist)
+                {
+                    if (address.SequenceEqual(bytes))
+                    {
+                        badIp = false;
+                        break;
+                    }
+                }
+
+                if (badIp)
+                {
+                    _logger.LogWarning(
+                        "Forbidden Request from Remote IP address: {RemoteIp}", remoteIp);
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return;
+                }
+                //}
+
+                await _next.Invoke(context);
+            }
+        }
     }
 }
